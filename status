@@ -1,0 +1,332 @@
+<?php
+/**
+*
+* @ This file is created by http://DeZender.Net
+* @ deZender (PHP7 Decoder for ionCube Encoder)
+*
+* @ Version			:	5.0.1.0
+* @ Author			:	DeZender
+* @ Release on		:	22.04.2022
+* @ Official site	:	http://DeZender.Net
+*
+*/
+
+function isRunning()
+{
+	$rNginx = 0;
+	exec('ps -fp $(pgrep -u xcms 2>/dev/null) 2>/dev/null', $rOutput, $rReturnVar);
+
+	foreach ($rOutput as $rProcess) {
+		$rSplit = explode(' ', preg_replace('!\\s+!', ' ', trim($rProcess)));
+		if (($rSplit[8] == 'nginx:') && ($rSplit[9] == 'master')) {
+			$rNginx++;
+		}
+	}
+
+	return 0 < $rNginx;
+}
+
+function getServers()
+{
+	XCMS::$db->query('SELECT * FROM `servers`');
+	$rServers = [];
+	$rOnlineStatus = [1];
+
+	foreach (XCMS::$db->get_rows() as $rRow) {
+		if (empty($rRow['domain_name'])) {
+			$rURL = escapeshellcmd($rRow['server_ip']);
+		}
+		else {
+			$rURL = str_replace(['http://', '/', 'https://'], '', escapeshellcmd(explode(',', $rRow['domain_name'])[0]));
+		}
+
+		if ($rRow['enable_https'] == 1) {
+			$rProtocol = 'https';
+		}
+		else {
+			$rProtocol = 'http';
+		}
+
+		$rPort = ($rProtocol == 'http' ? (int) $rRow['http_broadcast_port'] : (int) $rRow['https_broadcast_port']);
+		$rRow['site_url'] = $rProtocol . '://' . $rURL . ':' . $rPort . '/';
+
+		if ($rRow['server_type'] == 1) {
+			$rLastCheckTime = 180;
+		}
+		else {
+			$rLastCheckTime = 90;
+		}
+		$rRow['server_online'] = ($rRow['enabled'] && (in_array($rRow['status'], $rOnlineStatus) && ((time() - $rRow['last_check_ago']) <= $rLastCheckTime))) || (SERVER_ID == $rRow['id']);
+		$rServers[(int) $rRow['id']] = $rRow;
+	}
+
+	return $rServers;
+}
+
+function generateString($rLength = 10)
+{
+	$rCharacters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789qwertyuiopasdfghjklzxcvbnm';
+	$rString = '';
+	$rMax = strlen($rCharacters) - 1;
+
+	for ($i = 0; $i < $rLength; $i++) {
+		$rString .= $rCharacters[rand(0, $rMax)];
+	}
+
+	return $rString;
+}
+
+if (posix_getpwuid(posix_geteuid())['name'] != 'root') {
+	exit('Please run as root!' . "\n");
+}
+
+set_time_limit(0);
+
+if (!@$argc) {
+	exit(0);
+}
+
+$rFirstRun = false;
+
+if (isset($argv[1])) {
+	$rFirstRun = true;
+}
+
+require str_replace('\\', '/', dirname($argv[0])) . '/www/stream/init.php';
+ini_set('display_startup_errors', 1);
+ini_set('display_errors', 1);
+error_reporting(32767);
+
+if (!$rFirstRun) {
+	echo "\n" . 'Status' . "\n" . '------------------------------' . "\n";
+
+	if (isrunning()) {
+		echo 'XCMS is running.' . "\n\n";
+	}
+	else {
+		echo 'XCMS is not running.' . "\n\n";
+	}
+}
+else {
+	echo "\n";
+}
+
+Xcms\Functions::updateCredentials();
+echo 'Database' . "\n" . '------------------------------' . "\n";
+XCMS::connectDatabase();
+
+if (!XCMS::$db->connected) {
+	echo 'Couldn\'t connect to database using credentials. Please add them to config.ini.' . "\n\n";
+	exit();
+}
+else {
+	echo 'Connected successfully.' . "\n\n";
+}
+
+$rServers = getservers();
+if (isrunning() && $rServers[SERVER_ID]['is_main']) {
+	echo 'License' . "\n" . '------------------------------' . "\n";
+	$rConfig = parse_ini_string(file_get_contents(XCMS_HOME . 'config/config.ini'));
+
+	if ($rConfig['license']) {
+		$rPort = (int) explode(';', explode(' ', trim(explode('listen ', file_get_contents(XCMS_HOME . 'bin/nginx/conf/ports/http.conf'))[1]))[0])[0] ?: 8080;
+		$rLicenseReturn = Xcms\Functions::updateLicense($rPort);
+
+		if ($rLicenseReturn['status']) {
+			echo 'License expires: ' . date('Y-m-d H:i:s', Xcms\Functions::getLicense()[3]) . "\n\n";
+			$rReissueInfo = Xcms\Functions::checkReissues();
+			XCMS::$db->query('UPDATE `settings` SET `reissues` = ?', json_encode($rReissueInfo));
+		}
+		else {
+			echo 'Failed to generate license! Error: ' . $rLicenseReturn['error'] . "\n\n";
+		}
+	}
+	else {
+		echo 'No license key in configuration file. Please add it to config.ini and try again.' . "\n\n";
+	}
+}
+
+if ($rServers[SERVER_ID]['is_main']) {
+}
+
+if (!file_exists(XCMS_HOME . 'bin/nginx/conf/custom.conf')) {
+	touch(XCMS_HOME . 'bin/nginx/conf/custom.conf');
+	chown(XCMS_HOME . 'bin/nginx/conf/custom.conf', 'xcms');
+}
+
+if (!file_exists(XCMS_HOME . 'bin/nginx/conf/realip_cdn.conf')) {
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/realip_cdn.conf', '');
+	chown(XCMS_HOME . 'bin/nginx/conf/realip_cdn.conf', 'xcms');
+}
+
+if (!file_exists(XCMS_HOME . 'bin/nginx/conf/realip_cloudflare.conf')) {
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/realip_cloudflare.conf', '');
+	chown(XCMS_HOME . 'bin/nginx/conf/realip_cloudflare.conf', 'xcms');
+}
+
+if (!file_exists(XCMS_HOME . 'bin/nginx/conf/realip_xcms.conf')) {
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/realip_xcms.conf', '');
+	chown(XCMS_HOME . 'bin/nginx/conf/realip_xcms.conf', 'xcms');
+}
+if (!file_exists(XCMS_HOME . 'bin/nginx/conf/gzip.conf') && $rServers[SERVER_ID]['is_main']) {
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/gzip.conf', 'gzip off;');
+	chown(XCMS_HOME . 'bin/nginx/conf/gzip.conf', 'xcms');
+}
+
+if (!file_exists(XCMS_HOME . 'bin/nginx/conf/limit.conf')) {
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/limit.conf', '');
+	chown(XCMS_HOME . 'bin/nginx/conf/limit.conf', 'xcms');
+}
+
+if (!file_exists(XCMS_HOME . 'bin/nginx/conf/geo.conf')) {
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/geo.conf', '');
+	chown(XCMS_HOME . 'bin/nginx/conf/geo.conf', 'xcms');
+}
+
+if (!file_exists(XCMS_HOME . 'bin/nginx/conf/limit_queue.conf')) {
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/limit_queue.conf', '');
+	chown(XCMS_HOME . 'bin/nginx/conf/limit_queue.conf', 'xcms');
+}
+
+shell_exec('sudo chmod 0660 ' . XCMS_HOME . 'bin/php/sockets/*');
+shell_exec('sudo chmod 0771 ' . XCMS_HOME . 'bin/daemons.sh');
+shell_exec('sudo chmod 0775 ' . XCMS_HOME . 'bin/certbot');
+shell_exec('sudo chmod 0770 ' . XCMS_HOME . 'config/license');
+shell_exec('sudo chown -R xcms:xcms ' . XCMS_HOME . 'config');
+shell_exec('sudo echo \'net.ipv4.ip_unprivileged_port_start=0\' > /etc/sysctl.d/50-allports-nonroot.conf && sudo sysctl --system 2> /dev/null');
+$rCrons = [];
+
+if (file_exists(CRON_PATH . 'root_signals.php')) {
+	$rCrons[] = '* * * * * ' . PHP_BIN . ' ' . CRON_PATH . 'root_signals.php # XCMS';
+}
+
+if (file_exists(CRON_PATH . 'root_mysql.php')) {
+	$rCrons[] = '* * * * * ' . PHP_BIN . ' ' . CRON_PATH . 'root_mysql.php # XCMS';
+}
+
+$rWrite = false;
+exec('sudo crontab -l', $rOutput);
+
+foreach ($rCrons as $rCron) {
+	if (!in_array($rCron, $rOutput)) {
+		$rOutput[] = $rCron;
+		$rWrite = true;
+	}
+}
+
+if ($rWrite) {
+	$rCronFile = tempnam(TMP_PATH, 'crontab');
+	file_put_contents($rCronFile, implode("\n", $rOutput) . "\n");
+	exec('sudo chattr -i /var/spool/cron/crontabs/root');
+	exec('sudo crontab -r');
+	exec('sudo crontab ' . $rCronFile);
+	exec('sudo chattr +i /var/spool/cron/crontabs/root');
+	echo 'Root crontab installed.' . "\n\n";
+}
+
+$rFile = file('/etc/systemd/system.conf');
+$rFoundHL = false;
+$rFoundSL = false;
+
+for ($i = 0; $i < count($rFile); $i++) {
+	if (substr($rFile[$i], 0, 19) == 'DefaultLimitNOFILE=') {
+		$rFoundHL = true;
+	}
+
+	if (substr($rFile[$i], 0, 23) == 'DefaultLimitNOFILESoft=') {
+		$rFoundSL = true;
+	}
+}
+if (!$rFoundHL || !$rFoundSL) {
+	echo 'Configuration' . "\n" . '------------------------------' . "\n";
+	echo 'Increasing file limit... You need to reboot your system!' . "\n\n";
+
+	if (!$rFoundHL) {
+		shell_exec('sudo echo "' . "\n" . 'DefaultLimitNOFILE=1048576" >> "/etc/systemd/system.conf"');
+		shell_exec('sudo echo "' . "\n" . 'DefaultLimitNOFILE=1048576" >> "/etc/systemd/user.conf"');
+	}
+
+	if (!$rFoundSL) {
+		shell_exec('sudo echo "' . "\n" . 'DefaultLimitNOFILESoft=1048576" >> "/etc/systemd/system.conf"');
+		shell_exec('sudo echo "' . "\n" . 'DefaultLimitNOFILESoft=1048576" >> "/etc/systemd/user.conf"');
+	}
+}
+
+if ($rServers[SERVER_ID]['is_main']) {
+	foreach ($rServers as $rServerID => $rServerArray) {
+		XCMS::$db->query('DELETE FROM `signals` WHERE `custom_data` = ?;', json_encode(['action' => 'update_binaries']));
+		XCMS::$db->query('INSERT INTO `signals`(`server_id`, `time`, `custom_data`) VALUES(?, ?, ?);', $rServerID, time(), json_encode(['action' => 'update_binaries']));
+	}
+
+	$rPassword = trim(explode("\n", explode("\n" . 'requirepass ', $rConfig)[1])[0]);
+
+	if ($rPassword == '#PASSWORD#') {
+		$rPassword = generatestring(512);
+		$rConfig = str_replace('#PASSWORD#', $rPassword, $rConfig);
+		echo 'Generating a new Redis password' . "\n\n";
+		file_put_contents(XCMS_HOME . 'bin/redis/redis.conf', $rConfig);
+	}
+
+	XCMS::$db->query('SELECT `redis_password` FROM `settings`;');
+
+	if ($rPassword != XCMS::$db->get_row()['redis_password']) {
+		echo 'Updating Redis password in database' . "\n";
+		XCMS::$db->query('UPDATE `settings` SET `redis_password` = ?;', $rPassword);
+	}
+}
+if (!$rFirstRun && $rServers[SERVER_ID]['is_main']) {
+	XCMS::$db->query('UPDATE `servers` SET `is_main` = 0 WHERE `id` <> ?;', SERVER_ID);
+	XCMS::$db->query('UPDATE `servers` SET `is_main` = 1 WHERE `id` = ?;', SERVER_ID);
+	echo 'Database ' . XCMS_VERSION;
+	XCMS::$db->query('UPDATE `settings` SET `status_uuid` = ?;', md5(XCMS_VERSION . (!!XCMS_REVISION ? 'R' . XCMS_REVISION : '')));
+	XCMS::$db->query('SELECT * FROM `access_codes` WHERE `enabled` = 1 AND `type` = 0;');
+	$rTotalCodes = 0;
+	echo 'Access Codes' . "\n" . '------------------------------' . "\n";
+
+	foreach (XCMS::$db->get_rows() as $rRow) {
+		$rExists = file_exists(XCMS_HOME . 'bin/nginx/conf/codes/' . $rRow['code'] . '.conf');
+
+		if ($rExists) {
+			$rTotalCodes++;
+		}
+
+		echo $rServers[SERVER_ID]['site_url'] . $rRow['code'] . '/' . "\n";
+	}
+
+	if ($rTotalCodes == 0) {
+		echo 'No access codes available!' . "\n" . 'Generate a rescue code using tools' . "\n\n";
+	}
+	else {
+		echo "\n";
+	}
+
+	XCMS::$db->query('SELECT COUNT(`id`) AS `count` FROM `users` LEFT JOIN `users_groups` ON `users_groups`.`group_id` = `users`.`member_group_id` WHERE `status` = 1 AND `users_groups`.`is_admin` = 1;');
+
+	if (XCMS::$db->get_row()['count'] == 0) {
+		echo 'No administrator users are available on the system.' . "\n" . 'Generate a rescue user with tools' . "\n\n";
+	}
+
+	echo 'Servers' . "\n" . '------------------------------' . "\n";
+	$rOffline = 0;
+
+	foreach ($rServers as $rServerID => $rServer) {
+		if ($rServerID == SERVER_ID) {
+			continue;
+		}
+		if (!$rServer['server_online'] && $rServer['enabled'] && ($rServer['status'] != 3) && ($rServer['status'] != 5)) {
+			echo 'Server #' . $rServerID . ' - ' . $rServer['server_ip'] . ' - Down since: ' . ($rServer['last_check_ago'] ? date('Y-m-d H:i:s', $rServer['last_check_ago']) : 'Always') . "\n";
+			$rOffline++;
+		}
+	}
+
+	if ($rOffline == 0) {
+		echo 'All servers are Online and reporting back to XCMS!' . "\n\n";
+	}
+	else {
+		echo "\n";
+	}
+}
+
+XCMS::$db->query('UPDATE `servers` SET `xcms_version` = ?, `xcms_revision` = ? WHERE `id` = ?;', XCMS_VERSION, XCMS_REVISION, SERVER_ID);
+
+?>

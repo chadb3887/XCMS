@@ -1,0 +1,206 @@
+<?php
+/**
+*
+* @ This file is created by http://DeZender.Net
+* @ deZender (PHP7 Decoder for ionCube Encoder)
+*
+* @ Version			:	5.0.1.0
+* @ Author			:	DeZender
+* @ Release on		:	22.04.2022
+* @ Official site	:	http://DeZender.Net
+*
+*/
+
+if (posix_getpwuid(posix_geteuid())['name'] != 'root') {
+	exit('Please run as root!' . "\n");
+}
+
+require str_replace('\\', '/', dirname($argv[0])) . '/includes/admin.php';
+echo "\n";
+$rAction = (1 < count($argv) ? $argv[1] : NULL);
+
+switch ($rAction) {
+case 'rescue':
+	$db->query('DELETE FROM `access_codes` WHERE `code` = \'rescue\';');
+	$db->query('INSERT INTO `access_codes`(`code`, `type`, `enabled`, `groups`) VALUES(\'rescue\', 0, 1, \'[1]\');');
+	echo 'A rescue access code has been created.' . "\n" . 'Please ensure you delete this after you\'re done with it.' . "\n";
+	echo 'Access: http://' . XCMS::$rServers[SERVER_ID]['server_ip'] . ':' . XCMS::$rServers[SERVER_ID]['http_broadcast_port'] . '/rescue/' . "\n\n";
+	updateCodes();
+	shell_exec('sudo ' . XCMS_HOME . 'service reload 2>/dev/null');
+	break;
+case 'access':
+	echo 'Generating access code configuration...' . "\n\n";
+	updateCodes();
+	shell_exec('sudo ' . XCMS_HOME . 'service reload 2>/dev/null');
+
+	foreach (getCodes(0) as $rCode) {
+		echo 'http://' . XCMS::$rServers[SERVER_ID]['server_ip'] . ':' . XCMS::$rServers[SERVER_ID]['http_broadcast_port'] . '/' . $rCode['code'] . '/' . "\n";
+	}
+
+	echo "\n";
+	break;
+case 'ports':
+	echo 'Generating port configuration...' . "\n\n";
+	$rConfig = ['http' => array_unique(array_merge([XCMS::$rServers[SERVER_ID]['http_broadcast_port']], explode(',', XCMS::$rServers[SERVER_ID]['http_ports_add']) ?: [])), 'https' => array_unique(array_merge([XCMS::$rServers[SERVER_ID]['https_broadcast_port']], explode(',', XCMS::$rServers[SERVER_ID]['https_ports_add']) ?: [])), 'rtmp' => XCMS::$rServers[SERVER_ID]['rtmp_port']];
+
+	foreach ($rConfig as $rKey => $rPorts) {
+		if ($rKey == 'http') {
+			$rListen = [];
+
+			foreach ($rPorts as $rPort) {
+				if (is_numeric($rPort) && (80 <= $rPort) && ($rPort <= 65535)) {
+					$rListen[] = 'listen ' . (int) $rPort . ';';
+				}
+			}
+
+			file_put_contents(XCMS_HOME . 'bin/nginx/conf/ports/http.conf', implode(' ', $rListen));
+			file_put_contents(XCMS_HOME . 'bin/nginx_rtmp/conf/live.conf', 'on_play http://127.0.0.1:' . (int) $rPorts[0] . '/stream/rtmp; on_publish http://127.0.0.1:' . (int) $rPorts[0] . '/stream/rtmp; on_play_done http://127.0.0.1:' . (int) $rPorts[0] . '/stream/rtmp;');
+		}
+		else if ($rKey == 'https') {
+			$rListen = [];
+
+			foreach ($rPorts as $rPort) {
+				if (is_numeric($rPort) && (80 <= $rPort) && ($rPort <= 65535)) {
+					$rListen[] = 'listen ' . (int) $rPort . ' ssl;';
+				}
+			}
+
+			if (XCMS::$rServers[SERVER_ID]['enable_https']) {
+				file_put_contents(XCMS_HOME . 'bin/nginx/conf/ports/https.conf', implode(' ', $rListen));
+			}
+			else {
+				file_put_contents(XCMS_HOME . 'bin/nginx/conf/ports/https.conf', '');
+			}
+		}
+		else if ($rKey == 'rtmp') {
+			file_put_contents(XCMS_HOME . 'bin/nginx_rtmp/conf/port.conf', 'listen ' . (int) $rPorts . ';');
+		}
+	}
+
+	if (0 < count($rConfig['http'])) {
+		echo 'HTTP Ports: ' . implode(', ', $rConfig['http']) . "\n";
+	}
+
+	if (0 < count($rConfig['https'])) {
+		echo 'SSL Ports: ' . implode(', ', $rConfig['https']) . "\n";
+	}
+
+	if (!empty($rConfig['http'])) {
+		echo 'RTMP Port: ' . $rConfig['rtmp'] . "\n";
+	}
+
+	shell_exec('sudo ' . XCMS_HOME . 'service reload 2>/dev/null');
+	echo "\n";
+	break;
+case 'user':
+	$rGroup = getMemberGroup(1);
+	if (!$rGroup || !$rGroup['is_admin']) {
+		$db->query('DELETE FROM `users_groups` WHERE `group_id` = 1;');
+		$db->query('INSERT INTO `users_groups` (`group_id`, `group_name`, `is_admin`, `is_reseller`, `total_allowed_gen_trials`, `total_allowed_gen_in`, `delete_users`, `allowed_pages`, `can_delete`, `create_sub_resellers`, `create_sub_resellers_price`, `reseller_client_connection_logs`, `can_view_vod`, `allow_download`, `minimum_trial_credits`, `allow_restrictions`, `allow_change_username`, `allow_change_password`, `minimum_username_length`, `minimum_password_length`) VALUES (1, \'Administrators\', 1, 0, 0, \'day\', 0, \'[]\', 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 8, 8);');
+	}
+
+	$rPassword = generateString(10);
+	$db->query('DELETE FROM `users` WHERE `username` = \'rescue\';');
+	$rArray = ['username' => 'rescue', 'password' => $rPassword, 'member_group_id' => 1, 'status' => 1, 'credits' => 0];
+	API::processUser($rArray, true);
+	echo 'A rescue user has been created.' . "\n" . 'Please ensure you delete this after you\'re done with it.' . "\n";
+	echo 'Username: rescue' . "\n";
+	echo 'Password: ' . $rPassword . "\n\n";
+	break;
+case 'mysql':
+	authMySQL();
+	echo 'Load balancers have been granted access to MySQL in the system.' . "\n\n";
+	break;
+case 'database':
+	if (!file_exists(XCMS_HOME . 'bin/install/database.sql')) {
+		exit('FATAL: database.sql file is missing from the installation.');
+	}
+
+	$db->query('DROP DATABASE IF EXISTS `xcms`;');
+	$db->query('CREATE DATABASE IF NOT EXISTS `xcms`;');
+	shell_exec('sudo mysql xcms < "' . XCMS_HOME . 'bin/install/database.sql"');
+	shell_exec('sudo ' . PHP_BIN . ' ' . INCLUDES_PATH . 'startup.php');
+	authMySQL();
+	$db = new Database();
+	XCMS::$db = & $db;
+	XCMS::init();
+	API::$db = & $db;
+	API::init();
+	$db->query('INSERT INTO `access_codes`(`code`, `type`, `enabled`, `groups`) VALUES(\'rescue\', 0, 1, \'[1]\');');
+	$rPassword = generateString(10);
+	$rArray = ['username' => 'rescue', 'password' => $rPassword, 'member_group_id' => 1, 'status' => 1, 'credits' => 0];
+	API::processUser($rArray, true);
+	echo 'Blank XCMS database has been restored.' . "\n" . 'Configuring ports...' . "\n";
+	$rSocket = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+	socket_connect($rSocket, '8.8.8.8', 53);
+	socket_getsockname($rSocket, $rIP);
+	socket_shutdown($rSocket);
+	socket_close($rSocket);
+	$db->query('UPDATE `servers` SET `server_ip` = ? WHERE `id` = 1;', $rIP);
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/ports/http.conf', 'listen 80;');
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/ports/https.conf', 'listen 443 ssl;');
+	file_put_contents(XCMS_HOME . 'bin/nginx_rtmp/conf/live.conf', 'on_play http://127.0.0.1:80/stream/rtmp; on_publish http://127.0.0.1:80/stream/rtmp; on_play_done http://127.0.0.1:80/stream/rtmp;');
+	file_put_contents(XCMS_HOME . 'bin/nginx_rtmp/conf/port.conf', 'listen 8880;');
+	$rServices = 4;
+	shell_exec('sudo rm ' . XCMS_HOME . 'bin/php/etc/*.conf');
+	$rNewScript = '#! /bin/bash' . "\n";
+	$rNewBalance = 'upstream php {' . "\n" . '    least_conn;' . "\n";
+	$rTemplate = file_get_contents(XCMS_HOME . 'bin/php/etc/template');
+
+	foreach (range(1, $rServices) as $i) {
+		$rNewScript .= 'start-stop-daemon --start --quiet --pidfile ' . XCMS_HOME . 'bin/php/sockets/' . $i . '.pid --exec ' . XCMS_HOME . 'bin/php/sbin/php-fpm -- --daemonize --fpm-config ' . XCMS_HOME . 'bin/php/etc/' . $i . '.conf' . "\n";
+		$rNewBalance .= '    server unix:' . XCMS_HOME . 'bin/php/sockets/' . $i . '.sock;' . "\n";
+		file_put_contents(XCMS_HOME . 'bin/php/etc/' . $i . '.conf', str_replace('#PATH#', XCMS_HOME, str_replace('#ID#', $i, $rTemplate)));
+	}
+
+	file_put_contents(XCMS_HOME . 'bin/daemons.sh', $rNewScript);
+	file_put_contents(XCMS_HOME . 'bin/nginx/conf/balance.conf', $rNewBalance . '}');
+	shell_exec('sudo systemctl stop xcms');
+	shell_exec('sudo systemctl start xcms');
+	echo 'Access: http://' . $rIP . '/rescue/' . "\n\n";
+	echo 'Username: rescue' . "\n";
+	echo 'Password: ' . $rPassword . "\n\n";
+	echo 'You need to edit the server settings after logging in.' . "\n\n";
+	break;
+case 'migration':
+	$db->query('DROP DATABASE IF EXISTS `xcms_migrate`;');
+	$db->query('CREATE DATABASE IF NOT EXISTS `xcms_migrate`;');
+	echo 'Migration database has been cleared.' . "\n";
+	$rRestore = (count($argv) == 3 ? $argv[2] : NULL);
+	if ($rRestore && file_exists($rRestore) && pathinfo($rRestore['extension'] == 'sql')) {
+		echo 'Restoring: ' . $rRestore . "\n";
+		shell_exec('sudo mysql xcms_migrate < ' . escapeshellarg($rRestore));
+		echo 'If no errors were shown above, restore was completed.' . "\n\n";
+	}
+	else {
+		echo 'You can restore a database to it using:' . "\n";
+		echo 'sudo mysql xcms_migrate < backup.sql' . "\n\n";
+	}
+
+	authMySQL();
+	break;
+case 'flush':
+	$db->query('TRUNCATE `blocked_ips`;');
+	shell_exec('sudo rm ' . FLOOD_TMP_PATH . 'block_*');
+	shell_exec('sudo ' . BIN_PATH . 'nginx/sbin/nginx -s reload');
+	shell_exec('sudo ' . BIN_PATH . 'nginx_rtmp/sbin/nginx_rtmp -s reload');
+	shell_exec('sudo iptables -F && sudo ip6tables -F');
+	shell_exec('sudo iptables-save && sudo ip6tables-save');
+	echo 'Blocked IP\'s have been flushed.' . "\n\n";
+	break;
+default:
+	echo 'Actions' . "\n" . '----------------------------------------------------------------' . "\n";
+	echo 'rescue' . "\t\t\t" . 'Create a rescue access code for the admin panel.' . "\n";
+	echo 'user' . "\t\t\t" . 'Create a rescue admin user for the admin panel.' . "\n";
+	echo 'mysql' . "\t\t\t" . 'Reauthorise load balancers on MySQL.' . "\n";
+	echo 'database' . "\t\t" . 'Restore blank XCMS database.' . "\n";
+	echo 'migration' . "\t\t" . 'Clear migration database.' . "\n";
+	echo 'flush' . "\t\t\t" . 'Flush blocked IP database.' . "\n";
+	echo 'ports' . "\t\t\t" . 'Regenerate ports from SQL table.' . "\n";
+	echo 'access' . "\t\t\t" . 'Regenerate access codes from SQL table.' . "\n\n";
+	break;
+}
+
+exit();
+
+?>

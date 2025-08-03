@@ -1,0 +1,40 @@
+<?php
+/**
+*
+* @ This file is created by http://DeZender.Net
+* @ deZender (PHP7 Decoder for ionCube Encoder)
+*
+* @ Version			:	5.0.1.0
+* @ Author			:	DeZender
+* @ Release on		:	22.04.2022
+* @ Official site	:	http://DeZender.Net
+*
+*/
+
+function ioncube_event_handler($rError, $rParams)
+{
+	global $rErrorCodes;
+	global $argc;
+
+	if (!@$argc) {
+		$rStyle = '*{-webkit-box-sizing:border-box;box-sizing:border-box}body{padding:0;margin:0}#notfound{position:relative;height:100vh}#notfound .notfound{position:absolute;left:50%;top:50%;-webkit-transform:translate(-50%,-50%);-ms-transform:translate(-50%,-50%);transform:translate(-50%,-50%)}.notfound{max-width:520px;width:100%;line-height:1.4;text-align:center}.notfound .notfound-404{position:relative;height:200px;margin:0 auto 20px;z-index:-1}.notfound .notfound-404 h1{font-family:Montserrat,sans-serif;font-size:236px;font-weight:200;margin:0;color:#211b19;text-transform:uppercase;position:absolute;left:50%;top:50%;-webkit-transform:translate(-50%,-50%);-ms-transform:translate(-50%,-50%);transform:translate(-50%,-50%)}.notfound .notfound-404 h2{font-family:Montserrat,sans-serif;font-size:28px;font-weight:400;text-transform:uppercase;color:#211b19;background:#fff;padding:10px 5px;margin:auto;display:inline-block;position:absolute;bottom:0;left:0;right:0}.notfound p{font-family:Montserrat,sans-serif;font-size:14px;font-weight:300;text-transform:uppercase}@media only screen and (max-width:767px){.notfound .notfound-404 h1{font-size:148px}}@media only screen and (max-width:480px){.notfound .notfound-404{height:148px;margin:0 auto 10px}.notfound .notfound-404 h1{font-size:86px}.notfound .notfound-404 h2{font-size:16px}}';
+		echo '<html><head><title>XCMS - Unlicensed</title><link href="https://fonts.googleapis.com/css?family=Montserrat:200,400,700" rel="stylesheet"><style>' . $rStyle . '</style></head><body><div id="notfound"><div class="notfound"><div class="notfound-404"><h1>XCMSONE</h1><h2>' . $rErrorCodes[$rError][0] . '</h2><br/></div><p>' . $rErrorCodes[$rError][1] . '</p></div></div></body></html>';
+	}
+	else {
+		echo 'XCMS Error' . "\n" . $rErrorCodes[$rError][1] . "\n";
+	}
+
+	exit();
+}
+
+$rErrorCodes = [
+	ION_CORRUPT_FILE => ['File Tampering', 'This PHP file has been tampered with!'],
+	ION_NO_PERMISSIONS => ['Not Authorised', 'Your license is not authorised to run on this server.'],
+	ION_LICENSE_NOT_FOUND => ['No License', 'No license has been found. Please generate a new license.'],
+	ION_LICENSE_CORRUPT => ['License Corrupt', 'Your license has been corrupted! Please delete and regenerate your license.'],
+	ION_LICENSE_EXPIRED => ['License Expired', 'Your license has expired! Please check the billing panel for more information.'],
+	ION_LICENSE_HEADER_INVALID => ['License Tampering', 'Your license has been tampered with!'],
+	ION_LICENSE_SERVER_INVALID => ['Not Authorised', 'Your license is not authorised to run on this server.']
+];
+
+?>

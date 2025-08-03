@@ -1,0 +1,160 @@
+<?php
+/**
+*
+* @ This file is created by http://DeZender.Net
+* @ deZender (PHP7 Decoder for ionCube Encoder)
+*
+* @ Version			:	5.0.1.0
+* @ Author			:	DeZender
+* @ Release on		:	22.04.2022
+* @ Official site	:	http://DeZender.Net
+*
+*/
+
+if (posix_getpwuid(posix_geteuid())['name'] != 'root') {
+	exit('Please run as root!' . "\n");
+}
+
+require str_replace('\\', '/', dirname($argv[0])) . '/includes/admin.php';
+shell_exec('apt -y install curl > /dev/null 2>&1');
+set_time_limit(0);
+ini_set('display_startup_errors', 1);
+ini_set('display_errors', 1);
+error_reporting(32767);
+
+if (SERVER_ID == '1') {
+	$rType = 'MAIN';
+}
+else {
+	$rType = 'LB';
+}
+
+echo "\x1b" . '[31mStarting Updates  ' . "\x1b" . '[0m' . PHP_EOL;
+$rDIR = '/home/xcms/';
+$rBase = 'https://xcms.live/priv/';
+$rGrab = file_get_contents($rBase . 'updater.php?xcms=' . base64_encode(XCMS_VERSION) . '&rev=' . base64_encode(XCMS_REVISION) . '&type=' . $rType);
+$rGrab = base64_decode($rGrab);
+
+if ($rGrab == 'Error') {
+	exit('An Error Has Occuried, Please Contact the XCMS Team!' . PHP_EOL);
+}
+
+if ($rGrab == 'NoUpgrade') {
+	exit('You are on the Latest Version of XCMS' . PHP_EOL);
+}
+
+$rGrab = json_decode($rGrab, true);
+$rStore = $rBase . 'ch/' . $rGrab['Path'] . '/';
+echo '[ Version: ' . $rGrab['Path'] . ' ]' . PHP_EOL;
+echo 'Updating Files ';
+
+foreach ($rGrab['Replace'] as $rReplace) {
+	if ($rReplace) {
+		echo "\x1b" . '[33m + ' . "\x1b" . '[0m';
+
+		if (file_exists($rDIR . $rReplace)) {
+			shell_exec('rm -rf ' . $rDIR . $rReplace);
+		}
+
+		shell_exec('curl -s ' . $rStore . $rReplace . '.txt > ' . $rDIR . $rReplace);
+		shell_exec('chown -R xcms:xcms ' . $rDIR . $rReplace);
+	}
+}
+
+echo "\x1b" . '[32m Done ' . "\x1b" . '[0m' . PHP_EOL;
+echo 'Updating Installers ';
+
+foreach ($rGrab['Zips'] as $rReplace) {
+	if ($rReplace) {
+		echo "\x1b" . '[33m + ' . "\x1b" . '[0m';
+
+		if (file_exists($rDIR . $rReplace)) {
+			shell_exec('rm -rf ' . $rDIR . $rReplace);
+		}
+
+		$rGet = substr($rReplace, strrpos($rReplace, '/') + 1);
+		shell_exec('curl -s ' . $rStore . $rGet . ' > ' . $rDIR . $rReplace);
+		shell_exec('chown -R xcms:xcms ' . $rDIR . $rReplace);
+	}
+}
+
+echo "\x1b" . '[32m Done ' . "\x1b" . '[0m' . PHP_EOL;
+echo 'Updating Programs ';
+
+foreach ($rGrab['Binarys'] as $rReplace) {
+	if ($rReplace) {
+		echo "\x1b" . '[33m # ' . "\x1b" . '[0m';
+
+		if (file_exists($rDIR . $rReplace)) {
+			shell_exec('rm -rf ' . $rDIR . $rReplace);
+		}
+
+		$rGet = substr($rReplace, strrpos($rReplace, '/') + 1);
+		shell_exec('curl -s ' . $rStore . $rGet . ' > ' . $rDIR . $rReplace);
+		shell_exec('chown -R xcms:xcms ' . $rDIR . $rReplace);
+		shell_exec('chmod +x ' . $rDIR . $rReplace);
+	}
+}
+
+echo "\x1b" . '[32m Done ' . "\x1b" . '[0m' . PHP_EOL;
+echo 'Removing Old Stuff';
+
+foreach ($rGrab['Remove'] as $rReplace) {
+	if ($rReplace) {
+		echo "\x1b" . '[33m - ' . "\x1b" . '[0m';
+
+		if (file_exists($rReplace)) {
+			shell_exec('rm -rf ' . $rReplace);
+		}
+	}
+}
+
+echo "\x1b" . '[32m Done ' . "\x1b" . '[0m' . PHP_EOL;
+echo 'Modifying SQL ';
+$db = new Database();
+XCMS::$db = & $db;
+XCMS::init();
+
+if (!XCMS::$db->connected) {
+	echo ' Couldn\'t connect to database using credentials. Please add them to config.ini.' . "\n\n";
+	exit();
+}
+
+foreach ($rGrab['Sql'] as $rReplace) {
+	if ($rReplace) {
+		echo "\x1b" . '[33m ~ ' . "\x1b" . '[0m';
+		XCMS::$db->query(base64_decode($rReplace));
+	}
+}
+
+echo "\x1b" . '[32m Done ' . "\x1b" . '[0m' . PHP_EOL;
+echo 'Updating Server Files';
+
+foreach ($rGrab['Serv'] as $rReplace) {
+	if ($rReplace) {
+		echo "\x1b" . '[33m + ' . "\x1b" . '[0m';
+
+		if (file_exists($rReplace)) {
+			shell_exec('rm -rf ' . $rReplace);
+		}
+
+		$rGet = substr($rReplace, strrpos($rReplace, '/') + 1);
+		shell_exec('curl -s ' . $rStore . $rGet . ' > ' . $rReplace);
+		shell_exec('chmod +x ' . $rReplace);
+	}
+}
+
+echo "\x1b" . '[32m Done ' . "\x1b" . '[0m' . PHP_EOL;
+echo 'Running Server Commands';
+
+foreach ($rGrab['Cmds'] as $rReplace) {
+	if ($rReplace) {
+		echo "\x1b" . '[33m - ' . "\x1b" . '[0m';
+		shell_exec(base64_decode($rReplace) . ' > /dev/null 2>&1');
+	}
+}
+
+echo "\x1b" . '[32m Done ' . "\x1b" . '[0m' . PHP_EOL;
+echo "\x1b" . '[36mCompleted ' . "\x1b" . '[0m' . PHP_EOL;
+
+?>
